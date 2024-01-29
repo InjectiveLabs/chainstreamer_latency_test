@@ -15,8 +15,10 @@ module chainstreamerlat
 
 require (
 	github.com/InjectiveLabs/sdk-go v1.50.1
+	github.com/cometbft/cometbft v0.37.2
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.3
+	golang.org/x/sync v0.2.0
 )
 
 require (
@@ -49,7 +51,6 @@ require (
 	github.com/cockroachdb/errors v1.10.0 // indirect
 	github.com/cockroachdb/logtags v0.0.0-20230118201751-21c54148d20b // indirect
 	github.com/cockroachdb/redact v1.1.5 // indirect
-	github.com/cometbft/cometbft v0.37.2 // indirect
 	github.com/cometbft/cometbft-db v0.8.0 // indirect
 	github.com/confio/ics23/go v0.9.0 // indirect
 	github.com/cosmos/btcutil v1.0.5 // indirect
