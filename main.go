@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"flag"
 	"github.com/cometbft/cometbft/types"
+	"github.com/influxdata/influxdb-client-go/v2/api"
 	"golang.org/x/sync/errgroup"
 	"os"
 	"os/signal"
@@ -17,7 +19,22 @@ import (
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+
+	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 )
+
+var Influx_token string
+var Influx_url string
+var Influx_org string
+var Influx_bucket string
+
+func init() {
+	flag.StringVar(&Influx_token, "influx_token", "", "influx token")
+	flag.StringVar(&Influx_url, "influx_url", "", "influx url")
+	flag.StringVar(&Influx_org, "influx_org", "", "influx org")
+	flag.StringVar(&Influx_bucket, "influx_bucket", "", "influx bucket")
+	flag.Parse()
+}
 
 func main() {
 
@@ -50,11 +67,28 @@ func main() {
 		panic(err)
 	}
 
+	g, ctx := errgroup.WithContext(ctx)
+
+	var influxWriteAPI api.WriteAPI
+	var influxClient influxdb2.Client
+	if Influx_url != "" {
+		influxClient = influxdb2.NewClient(Influx_url, Influx_token)
+		influxWriteAPI = influxClient.WriteAPI(Influx_org, Influx_bucket)
+		errorsCh := influxWriteAPI.Errors()
+		g.Go(func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					return nil
+				case err = <-errorsCh:
+					return err
+				}
+			}
+		})
+	}
 	collector := NewBlocksCollector()
 
 	tmBlocksChannel := make(chan *Block)
-
-	g, ctx := errgroup.WithContext(ctx)
 
 	g.Go(func() error {
 		return tmBlockReceives(ctx, tmBlocksChannel)
@@ -94,20 +128,32 @@ func main() {
 				return nil
 			case event := <-collector.statsCh:
 				format := `Jan 02 15:04:05.000ms`
+
+				stLat := event.csRec.Sub(event.ts).Milliseconds()
+				tmLat := event.tmRec.Sub(event.ts).Milliseconds()
 				logger.WithFields(logrus.Fields{
 					"block ts": event.ts.Format(format),
 					/*"tm": event.tmRec.Format(format),
 					"cs": event.csRec.Format(format),*/
 					//ts latency
-					"chain latency ms":    event.tmRec.Sub(event.ts).Milliseconds(),
-					"streamer latency ms": event.csRec.Sub(event.ts).Milliseconds(),
+					"chain latency ms":    tmLat,
+					"streamer latency ms": stLat,
 					"height":              event.height,
 				}).Infoln("stats")
+				if influxWriteAPI != nil {
+					p := influxdb2.NewPointWithMeasurement("streamer_stats")
+					p = p.AddField("chain_latency_ms", tmLat)
+					p = p.AddField("streamer_latency_ms", stLat)
+					p = p.AddField("height", event.height)
+					p = p.SetTime(event.ts)
+					influxWriteAPI.WritePoint(p)
+				}
 			}
 		}
 	})
 
 	g.Wait()
+	influxClient.Close()
 }
 
 func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClient, blockCh chan<- *Block) error {
