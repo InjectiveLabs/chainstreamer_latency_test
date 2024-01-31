@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"github.com/cometbft/cometbft/types"
 	"github.com/influxdata/influxdb-client-go/v2/api"
 	"golang.org/x/sync/errgroup"
@@ -203,19 +204,19 @@ func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClien
 func tmBlockReceives(ctx context.Context, blockCh chan<- *Block, influxWriteAPI api.WriteAPI) (err error) {
 	cometBftClient, err := rpchttp.New(tm_address, "/websocket")
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create comet bft client: %w", err)
 	}
 	if !cometBftClient.IsRunning() {
 		err = cometBftClient.Start()
 		if err != nil {
-			return err
+			return return fmt.Errorf("failed to start comet bft client: %w", err)
 		}
 	}
 
 	query := `tm.event='NewBlockHeader'`
 	eventCh, err := cometBftClient.Subscribe(context.Background(), "", query, 10000)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to subscribe to comet bft client: %w", err)
 	}
 
 	healthCheckTime := 5 * time.Second
