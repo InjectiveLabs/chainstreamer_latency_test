@@ -55,6 +55,7 @@ func main() {
 	sentry := "lb"
 
 	network := common.NewNetwork()
+	network.ChainStreamGrpcEndpoint = cs_address
 	if strings.Contains(tm_address, "sentry") {
 		network = common.LoadNetwork("mainnet", sentry)
 	}
