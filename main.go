@@ -89,12 +89,12 @@ func main() {
 
 	tmBlocksChannel := make(chan *Block)
 	g.Go(func() error {
-		return tmBlockReceives(ctx, tmBlocksChannel)
+		return tmBlockReceives(ctx, tmBlocksChannel, influxWriteAPI)
 	})
 
 	chainstreamerBlocksCh := make(chan *Block)
 	g.Go(func() error {
-		return chainStreamBlockReceives(ctx, chainClient, chainstreamerBlocksCh)
+		return chainStreamBlockReceives(ctx, chainClient, chainstreamerBlocksCh, influxWriteAPI)
 	})
 
 	g.Go(func() error {
@@ -125,8 +125,8 @@ func main() {
 				}).Infoln("stats")
 				if influxWriteAPI != nil {
 					p := influxdb2.NewPointWithMeasurement("streamer_stats")
-					p = p.AddField("chain_latency_ms", tmLat)
-					p = p.AddField("streamer_latency_ms", stLat)
+					p = p.AddField("tm_lat_ms", tmLat)
+					p = p.AddField("cs_lat_ms", stLat)
 					p = p.AddField("height", event.height)
 					p = p.SetTime(event.ts)
 					influxWriteAPI.WritePoint(p)
@@ -139,7 +139,7 @@ func main() {
 	influxClient.Close()
 }
 
-func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClient, blockCh chan<- *Block) error {
+func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClient, blockCh chan<- *Block, influxWriteAPI api.WriteAPI) error {
 
 	btcUsdtPerpMarket := "0x4ca0f92fc28be0c9761326016b5a1a2177dd6375558365116b5bdda9abc229ce"
 
@@ -153,6 +153,11 @@ func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClien
 		return errors.Wrap(err, "failed to create chain stream")
 	}
 
+	healthCheckTime := 5 * time.Second
+	ticker := time.NewTicker(healthCheckTime)
+	defer ticker.Stop()
+	lastRecBlock := &Block{}
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -162,17 +167,24 @@ func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClien
 			if err != nil {
 				return errors.Wrap(err, "failed to receive stream message")
 			}
+			ticker.Reset(5 * time.Second)
 			hb := &Block{
 				BlockHeight:    int(res.BlockHeight),
 				BlockTimestamp: int(res.BlockTime),
 				ReceivedAt:     int(time.Now().UnixMilli()),
 			}
+			lastRecBlock = hb
 			blockCh <- hb
+		case t := <-ticker.C:
+			ticker.Reset(1 * time.Second)
+			lastRecBlockTime := time.UnixMilli(int64(lastRecBlock.ReceivedAt))
+			logrus.Warnf("elapsed time since last received block from  %.2fs: %s", t.Sub(lastRecBlockTime).Seconds(), "tm")
+			collectStreamerStats(t.Sub(lastRecBlockTime), influxWriteAPI, "cs")
 		}
 	}
 }
 
-func tmBlockReceives(ctx context.Context, blockCh chan<- *Block) (err error) {
+func tmBlockReceives(ctx context.Context, blockCh chan<- *Block, influxWriteAPI api.WriteAPI) (err error) {
 	tmEndpoint := "https://sentry.tm.injective.network:443"
 	cometBftClient, err := rpchttp.New(tmEndpoint, "/websocket")
 	if err != nil {
@@ -191,11 +203,17 @@ func tmBlockReceives(ctx context.Context, blockCh chan<- *Block) (err error) {
 		return err
 	}
 
+	healthCheckTime := 5 * time.Second
+	ticker := time.NewTicker(healthCheckTime)
+	defer ticker.Stop()
+
+	lastRecBlock := &Block{}
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case event := <-eventCh:
+			ticker.Reset(5 * time.Second)
 			if event.Data == nil {
 				continue
 			}
@@ -209,7 +227,23 @@ func tmBlockReceives(ctx context.Context, blockCh chan<- *Block) (err error) {
 				BlockTimestamp: blockTimestamp,
 				ReceivedAt:     int(time.Now().UnixMilli()),
 			}
+			lastRecBlock = hb
 			blockCh <- hb
+		case t := <-ticker.C:
+			ticker.Reset(1 * time.Second)
+			lastRecBlockTime := time.UnixMilli(int64(lastRecBlock.ReceivedAt))
+			logrus.Warnf("elapsed time since last received block from  %.2fs: %s", t.Sub(lastRecBlockTime).Seconds(), "tm")
+			collectStreamerStats(t.Sub(lastRecBlockTime), influxWriteAPI, "tm")
 		}
+	}
+}
+
+func collectStreamerStats(elapsedTimeSinceLastReceivedBlock time.Duration, influxWriteAPI api.WriteAPI, source string) {
+	if influxWriteAPI != nil && elapsedTimeSinceLastReceivedBlock.Milliseconds() > 0 {
+		p := influxdb2.NewPointWithMeasurement("streamer_stats")
+		p = p.AddField("elapsed_ms_since_last_received_block", elapsedTimeSinceLastReceivedBlock.Milliseconds())
+		p = p.AddTag("source", source)
+		p = p.SetTime(time.Now())
+		influxWriteAPI.WritePoint(p)
 	}
 }

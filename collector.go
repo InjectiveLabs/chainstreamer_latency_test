@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	"github.com/influxdata/influxdb-client-go/v2/api"
-	"github.com/sirupsen/logrus"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,29 +55,12 @@ func (b *blocksCollector) collectStats(blockHeight int, blockTimestamp int, rece
 }
 
 func (b *blocksCollector) PushBlock(ctx context.Context, blockChannel chan *Block, source string) error {
-	healthCheckTime := 5 * time.Second
-	ticker := time.NewTicker(healthCheckTime)
-	defer ticker.Stop()
-	var lastRecBlock *Block
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case event := <-blockChannel:
-			lastRecBlock = event
-			ticker.Reset(healthCheckTime)
 			b.collectStats(event.BlockHeight, event.BlockTimestamp, event.ReceivedAt, source)
-		case t := <-ticker.C:
-			lastRecBlockTime := time.UnixMilli(int64(lastRecBlock.ReceivedAt))
-			elapsedTimeSinceLastReceivedBlock := t.Sub(lastRecBlockTime)
-			logrus.Warnf("elapsed time since last received block from  %.2fs: %s", elapsedTimeSinceLastReceivedBlock.Seconds(), source)
-			if b.InfluxWriteAPI != nil {
-				p := influxdb2.NewPointWithMeasurement("streamer_stats")
-				p = p.AddField("elapsed_ms_since_last_received_block", elapsedTimeSinceLastReceivedBlock.Milliseconds())
-				p = p.AddTag("source", source)
-				p = p.SetTime(time.Now())
-				b.InfluxWriteAPI.WritePoint(p)
-			}
 		}
 	}
 }
