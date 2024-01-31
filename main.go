@@ -8,8 +8,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"os"
 	"os/signal"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	chainStreamModule "github.com/InjectiveLabs/sdk-go/chain/stream/types"
@@ -86,10 +84,10 @@ func main() {
 			}
 		})
 	}
-	collector := NewBlocksCollector()
+
+	collector := NewBlocksCollector(influxWriteAPI)
 
 	tmBlocksChannel := make(chan *Block)
-
 	g.Go(func() error {
 		return tmBlockReceives(ctx, tmBlocksChannel)
 	})
@@ -100,25 +98,10 @@ func main() {
 	})
 
 	g.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case event := <-tmBlocksChannel:
-				collector.pushToMap(event.BlockHeight, event.BlockTimestamp, event.ReceivedAt, "tm")
-			}
-		}
+		return collector.PushBlock(ctx, tmBlocksChannel, "tm")
 	})
-
 	g.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case event := <-chainstreamerBlocksCh:
-				collector.pushToMap(event.BlockHeight, event.BlockTimestamp, event.ReceivedAt, "cs")
-			}
-		}
+		return collector.PushBlock(ctx, chainstreamerBlocksCh, "cs")
 	})
 
 	g.Go(func() error {
@@ -229,53 +212,4 @@ func tmBlockReceives(ctx context.Context, blockCh chan<- *Block) (err error) {
 			blockCh <- hb
 		}
 	}
-}
-
-type Block struct {
-	ReceivedAt     int `json:"received_at"`
-	BlockHeight    int `json:"block_height"`
-	BlockTimestamp int `json:"block_ts"`
-}
-
-type blocksCollector struct {
-	heightBufferMap map[int]map[string]time.Time
-	mux             sync.Mutex
-	currentHeight   atomic.Int64
-	statsCh         chan *Stats
-}
-
-func NewBlocksCollector() *blocksCollector {
-	return &blocksCollector{
-		heightBufferMap: make(map[int]map[string]time.Time),
-		currentHeight:   atomic.Int64{},
-		statsCh:         make(chan *Stats),
-	}
-}
-
-type Stats struct {
-	height int
-	ts     time.Time
-	tmRec  time.Time
-	csRec  time.Time
-}
-
-func (b *blocksCollector) pushToMap(blockHeight int, blockTimestamp int, receivedAt int, source string) {
-	b.mux.Lock()
-	defer b.mux.Unlock()
-	if b.heightBufferMap[blockHeight] == nil {
-		b.heightBufferMap[blockHeight] = make(map[string]time.Time)
-	} else {
-		defer func() {
-			b.currentHeight.Store(int64(blockHeight))
-			b.statsCh <- &Stats{
-				height: blockHeight,
-				ts:     time.UnixMilli(int64(blockTimestamp)),
-				tmRec:  b.heightBufferMap[blockHeight]["tm"],
-				csRec:  b.heightBufferMap[blockHeight]["cs"],
-			}
-			delete(b.heightBufferMap, blockHeight)
-		}()
-	}
-
-	b.heightBufferMap[blockHeight][source] = time.UnixMilli(int64(receivedAt))
 }
