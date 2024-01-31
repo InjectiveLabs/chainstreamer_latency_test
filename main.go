@@ -148,7 +148,10 @@ func main() {
 		}
 	})
 
-	g.Wait()
+	err = g.Wait()
+	if err != nil {
+		panic(err)
+	}
 	influxClient.Close()
 }
 
