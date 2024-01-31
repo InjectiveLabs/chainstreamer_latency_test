@@ -8,6 +8,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	chainStreamModule "github.com/InjectiveLabs/sdk-go/chain/stream/types"
@@ -40,6 +41,11 @@ func init() {
 
 func main() {
 
+	// print vars
+	logrus.Infof("tm_address: %s", tm_address)
+	logrus.Infof("cs_address: %s", cs_address)
+	logrus.Infof("influx_url: %s", Influx_url)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
 	defer func() {
 		cancel()
@@ -48,10 +54,12 @@ func main() {
 	logger := logrus.New() // You can decide if you want to output to stdout or file or both here.
 	sentry := "lb"
 
-	network := common.LoadNetwork("mainnet", sentry)
-
+	network := common.NewNetwork()
+	if strings.Contains(tm_address, "sentry") {
+		network = common.LoadNetwork("mainnet", sentry)
+	}
 	clientCtx, err := chainclient.NewClientContext(
-		network.ChainId,
+		"injective-1",
 		"",
 		nil,
 	)
