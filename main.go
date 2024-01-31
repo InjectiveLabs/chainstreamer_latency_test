@@ -66,7 +66,7 @@ func main() {
 		nil,
 	)
 	if err != nil {
-		panic(err)
+		fmt.Errorf("failed to init cosmos client context: %w", err)
 	}
 	clientCtx = clientCtx.WithNodeURI(cs_address)
 
@@ -76,7 +76,7 @@ func main() {
 		common.OptionGasPrices(client.DefaultGasPriceWithDenom),
 	)
 	if err != nil {
-		panic(err)
+		fmt.Errorf("failed to init cosmos chain client: %w", err)
 	}
 
 	g, ctx := errgroup.WithContext(ctx)
@@ -93,7 +93,8 @@ func main() {
 				case <-ctx.Done():
 					return nil
 				case err = <-errorsCh:
-					return err
+
+					return fmt.Errorf("failed to write to influx: %w", err)
 				}
 			}
 		})
