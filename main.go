@@ -126,7 +126,7 @@ func main() {
 					"height":              event.height,
 				}).Infoln("stats")
 				if influxWriteAPI != nil {
-					p := influxdb2.NewPointWithMeasurement("streamer_stats")
+					p := influxdb2.NewPointWithMeasurement("streamer_lat")
 					p = p.AddField("tm_lat_ms", tmLat)
 					p = p.AddField("cs_lat_ms", stLat)
 					p = p.AddField("height", event.height)
@@ -187,8 +187,7 @@ func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClien
 }
 
 func tmBlockReceives(ctx context.Context, blockCh chan<- *Block, influxWriteAPI api.WriteAPI) (err error) {
-	tmEndpoint := "https://sentry.tm.injective.network:443"
-	cometBftClient, err := rpchttp.New(tmEndpoint, "/websocket")
+	cometBftClient, err := rpchttp.New(chain_address, "/websocket")
 	if err != nil {
 		return err
 	}
