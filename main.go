@@ -209,7 +209,7 @@ func tmBlockReceives(ctx context.Context, blockCh chan<- *Block, influxWriteAPI 
 	if !cometBftClient.IsRunning() {
 		err = cometBftClient.Start()
 		if err != nil {
-			return return fmt.Errorf("failed to start comet bft client: %w", err)
+			return fmt.Errorf("failed to start comet bft client: %w", err)
 		}
 	}
 
