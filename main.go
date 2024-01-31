@@ -21,14 +21,16 @@ import (
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 )
 
-var chain_address string
+var tm_address string
+var cs_address string
 var Influx_token string
 var Influx_url string
 var Influx_org string
 var Influx_bucket string
 
 func init() {
-	flag.StringVar(&chain_address, "chain_address", "https://sentry.tm.injective.network:443", "chain address address endpoint")
+	flag.StringVar(&tm_address, "tm_address", "https://sentry.tm.injective.network:443", "tendermint address address endpoint")
+	flag.StringVar(&cs_address, "cs_address", "https://sentry.cs.injective.network:443", "chainstreamer address endpoint")
 	flag.StringVar(&Influx_token, "influx_token", "", "influx token")
 	flag.StringVar(&Influx_url, "influx_url", "", "influx url")
 	flag.StringVar(&Influx_org, "influx_org", "", "influx org")
@@ -56,7 +58,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	clientCtx = clientCtx.WithNodeURI(chain_address)
+	clientCtx = clientCtx.WithNodeURI(cs_address)
 
 	chainClient, err := chainclient.NewChainClient(
 		clientCtx,
@@ -187,7 +189,7 @@ func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClien
 }
 
 func tmBlockReceives(ctx context.Context, blockCh chan<- *Block, influxWriteAPI api.WriteAPI) (err error) {
-	cometBftClient, err := rpchttp.New(chain_address, "/websocket")
+	cometBftClient, err := rpchttp.New(tm_address, "/websocket")
 	if err != nil {
 		return err
 	}
