@@ -186,6 +186,10 @@ func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClien
 				return errors.Wrap(err, "failed to receive stream message")
 			}
 			ticker.Reset(5 * time.Second)
+
+			/*randVal := time.Duration(rand.Intn(8)) * time.Second
+			time.Sleep(randVal)*/
+
 			hb := &Block{
 				BlockHeight:    int(res.BlockHeight),
 				BlockTimestamp: int(res.BlockTime),
@@ -195,8 +199,13 @@ func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClien
 			blockCh <- hb
 		case t := <-ticker.C:
 			ticker.Reset(1 * time.Second)
-			lastRecBlockTime := time.UnixMilli(int64(lastRecBlock.ReceivedAt))
-			logrus.Warnf("elapsed time since last received block from  %.2fs: %s", t.Sub(lastRecBlockTime).Seconds(), "tm")
+			lastRecBlockTime := time.UnixMilli(int64(lastRecBlock.BlockTimestamp))
+			elapsedTimeSinceLastReceivedBlock := t.Sub(lastRecBlockTime)
+			logrus.Warnf("elapsed time since last received block from  %.2fs: %s", elapsedTimeSinceLastReceivedBlock.Seconds(), "cs")
+			if elapsedTimeSinceLastReceivedBlock.Milliseconds() <= 0 {
+				logrus.Infof("block height: %d, block ts: %s, elapsed time ms: %d, source: %s", lastRecBlock.BlockHeight, lastRecBlockTime, elapsedTimeSinceLastReceivedBlock.Milliseconds(), "cs")
+			}
+
 			collectStreamerStats(t.Sub(lastRecBlockTime), influxWriteAPI, "cs")
 		}
 	}
@@ -235,6 +244,9 @@ func tmBlockReceives(ctx context.Context, blockCh chan<- *Block, influxWriteAPI 
 				continue
 			}
 
+			/*randVal := time.Duration(rand.Intn(8)) * time.Second
+			time.Sleep(randVal)*/
+
 			var blockHeight int
 			var blockTimestamp int
 			blockHeight = int(event.Data.(types.EventDataNewBlockHeader).Header.Height)
@@ -248,7 +260,7 @@ func tmBlockReceives(ctx context.Context, blockCh chan<- *Block, influxWriteAPI 
 			blockCh <- hb
 		case t := <-ticker.C:
 			ticker.Reset(1 * time.Second)
-			lastRecBlockTime := time.UnixMilli(int64(lastRecBlock.ReceivedAt))
+			lastRecBlockTime := time.UnixMilli(int64(lastRecBlock.BlockTimestamp))
 			logrus.Warnf("elapsed time since last received block from  %.2fs: %s", t.Sub(lastRecBlockTime).Seconds(), "tm")
 			collectStreamerStats(t.Sub(lastRecBlockTime), influxWriteAPI, "tm")
 		}
