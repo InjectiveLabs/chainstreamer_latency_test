@@ -1,7 +1,9 @@
 package main
 
+import "time"
+
 type Block struct {
-	ReceivedAt     int `json:"received_at"`
-	BlockHeight    int `json:"block_height"`
-	BlockTimestamp int `json:"block_ts"`
+	ReceivedAt     time.Time `json:"received_at"`
+	BlockHeight    int       `json:"block_height"`
+	BlockTimestamp time.Time `json:"block_ts"`
 }

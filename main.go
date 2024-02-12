@@ -57,8 +57,6 @@ func main() {
 		cancel()
 	}()
 
-	logger := logrus.New() // You can decide if you want to output to stdout or file or both here.
-
 	shutdownOtel, err := opentelemetry.SetupOTelSDK(ctx)
 	if err != nil {
 		defer shutdownOtel(ctx)
@@ -107,41 +105,10 @@ func main() {
 	})
 
 	g.Go(func() error {
-		return collector.PushBlock(ctx, tmBlocksChannel, "tm")
+		return collector.PushBlock(ctx, tmBlocksChannel, "tm", influxWriteAPI)
 	})
 	g.Go(func() error {
-		return collector.PushBlock(ctx, chainstreamerBlocksCh, "cs")
-	})
-
-	g.Go(func() error {
-		for {
-			select {
-			case <-ctx.Done():
-				return nil
-			case event := <-collector.statsCh:
-				format := `Jan 02 15:04:05.000ms`
-
-				stLat := event.csRec.Sub(event.ts).Milliseconds()
-				tmLat := event.tmRec.Sub(event.ts).Milliseconds()
-				logger.WithFields(logrus.Fields{
-					"block ts": event.ts.Format(format),
-					/*"tm": event.tmRec.Format(format),
-					"cs": event.csRec.Format(format),*/
-					//ts latency
-					"chain latency ms":    tmLat,
-					"streamer latency ms": stLat,
-					"height":              event.height,
-				}).Infoln("stats")
-				if influxWriteAPI != nil {
-					p := influxdb2.NewPointWithMeasurement("streamer_lat")
-					p = p.AddField("tm_lat_ms", tmLat)
-					p = p.AddField("cs_lat_ms", stLat)
-					p = p.AddField("height", event.height)
-					p = p.SetTime(event.ts)
-					influxWriteAPI.WritePoint(p)
-				}
-			}
-		}
+		return collector.PushBlock(ctx, chainstreamerBlocksCh, "cs", influxWriteAPI)
 	})
 
 	err = g.Wait()
@@ -201,8 +168,8 @@ func chainStreamBlockReceives(ctx context.Context, client core_types.StreamClien
 
 			hb := &Block{
 				BlockHeight:    int(res.BlockHeight),
-				BlockTimestamp: int(res.BlockTime),
-				ReceivedAt:     int(time.Now().UnixMilli()),
+				BlockTimestamp: time.UnixMilli(res.BlockTime),
+				ReceivedAt:     time.Now(),
 			}
 			bz, _ := json.Marshal(res)
 			span.AddEvent("client_msg_marshalled", trace.WithAttributes(
@@ -215,7 +182,7 @@ func chainStreamBlockReceives(ctx context.Context, client core_types.StreamClien
 			blockCh <- hb
 		case t := <-ticker.C:
 			ticker.Reset(1 * time.Second)
-			lastRecBlockTime := time.UnixMilli(int64(lastRecBlock.BlockTimestamp))
+			lastRecBlockTime := lastRecBlock.BlockTimestamp
 			elapsedTimeSinceLastReceivedBlock := t.Sub(lastRecBlockTime)
 			logrus.Warnf("elapsed time since last received block from  %.2fs: %s", elapsedTimeSinceLastReceivedBlock.Seconds(), "cs")
 			if elapsedTimeSinceLastReceivedBlock.Milliseconds() <= 0 {
@@ -269,14 +236,14 @@ func tmBlockReceives(ctx context.Context, blockCh chan<- *Block, influxWriteAPI 
 			blockTimestamp = int(event.Data.(types.EventDataNewBlockHeader).Header.Time.UnixMilli())
 			hb := &Block{
 				BlockHeight:    blockHeight,
-				BlockTimestamp: blockTimestamp,
-				ReceivedAt:     int(time.Now().UnixMilli()),
+				BlockTimestamp: time.UnixMilli(int64(blockTimestamp)),
+				ReceivedAt:     time.Now(),
 			}
 			lastRecBlock = hb
 			blockCh <- hb
 		case t := <-ticker.C:
 			ticker.Reset(1 * time.Second)
-			lastRecBlockTime := time.UnixMilli(int64(lastRecBlock.BlockTimestamp))
+			lastRecBlockTime := lastRecBlock.BlockTimestamp
 			logrus.Warnf("elapsed time since last received block from  %.2fs: %s", t.Sub(lastRecBlockTime).Seconds(), "tm")
 			collectStreamerStats(t.Sub(lastRecBlockTime), influxWriteAPI, "tm")
 		}
