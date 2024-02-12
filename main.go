@@ -4,18 +4,23 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/InjectiveLabs/injective-core/injective-chain/opentelemetry"
+	core_types "github.com/InjectiveLabs/injective-core/injective-chain/stream/types"
+
+	"github.com/cometbft/cometbft/libs/json"
 	"github.com/cometbft/cometbft/types"
 	"github.com/influxdata/influxdb-client-go/v2/api"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"net"
 	"os"
 	"os/signal"
-	"strings"
+	"strconv"
 	"time"
 
-	chainStreamModule "github.com/InjectiveLabs/sdk-go/chain/stream/types"
-	"github.com/InjectiveLabs/sdk-go/client"
-	chainclient "github.com/InjectiveLabs/sdk-go/client/chain"
-	"github.com/InjectiveLabs/sdk-go/client/common"
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -53,31 +58,20 @@ func main() {
 	}()
 
 	logger := logrus.New() // You can decide if you want to output to stdout or file or both here.
-	sentry := "lb"
 
-	network := common.NewNetwork()
-	network.ChainStreamGrpcEndpoint = cs_address
-	if strings.Contains(tm_address, "sentry") {
-		network = common.LoadNetwork("mainnet", sentry)
-	}
-	clientCtx, err := chainclient.NewClientContext(
-		"injective-1",
-		"",
-		nil,
-	)
+	shutdownOtel, err := opentelemetry.SetupOTelSDK(ctx)
 	if err != nil {
-		fmt.Errorf("failed to init cosmos client context: %w", err)
+		defer shutdownOtel(ctx)
 	}
-	clientCtx = clientCtx.WithNodeURI(cs_address)
 
-	chainClient, err := chainclient.NewChainClient(
-		clientCtx,
-		network,
-		common.OptionGasPrices(client.DefaultGasPriceWithDenom),
-	)
+	cc, err := grpc.Dial(cs_address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		fmt.Errorf("failed to init cosmos chain client: %w", err)
+		panic(fmt.Errorf("failed to init chainstreamer client: %v", err))
 	}
+
+	// nolint:staticcheck //ignored on purpose
+	defer cc.Close()
+	cs_client := core_types.NewStreamClient(cc)
 
 	g, ctx := errgroup.WithContext(ctx)
 
@@ -109,7 +103,7 @@ func main() {
 
 	chainstreamerBlocksCh := make(chan *Block)
 	g.Go(func() error {
-		return chainStreamBlockReceives(ctx, chainClient, chainstreamerBlocksCh, influxWriteAPI)
+		return chainStreamBlockReceives(ctx, cs_client, chainstreamerBlocksCh, influxWriteAPI)
 	})
 
 	g.Go(func() error {
@@ -157,16 +151,16 @@ func main() {
 	influxClient.Close()
 }
 
-func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClient, blockCh chan<- *Block, influxWriteAPI api.WriteAPI) error {
+func chainStreamBlockReceives(ctx context.Context, client core_types.StreamClient, blockCh chan<- *Block, influxWriteAPI api.WriteAPI) error {
 
 	btcUsdtPerpMarket := "0x4ca0f92fc28be0c9761326016b5a1a2177dd6375558365116b5bdda9abc229ce"
 
-	req := chainStreamModule.StreamRequest{
-		DerivativeOrderbooksFilter: &chainStreamModule.OrderbookFilter{
+	req := core_types.StreamRequest{
+		DerivativeOrderbooksFilter: &core_types.OrderbookFilter{
 			MarketIds: []string{btcUsdtPerpMarket},
 		},
 	}
-	stream, err := client.ChainStream(ctx, req)
+	stream, err := client.Stream(ctx, &req)
 	if err != nil {
 		return errors.Wrap(err, "failed to create chain stream")
 	}
@@ -187,14 +181,36 @@ func chainStreamBlockReceives(ctx context.Context, client chainclient.ChainClien
 			}
 			ticker.Reset(5 * time.Second)
 
-			/*randVal := time.Duration(rand.Intn(8)) * time.Second
-			time.Sleep(randVal)*/
+			recSpanCtx := trace.SpanContext{}
+			if t, ok := res.Metadata["spanID"]; ok {
+				spanID, err := trace.SpanIDFromHex(t)
+				if err != nil {
+					panic(err)
+				}
+				traceID, err := trace.TraceIDFromHex(res.Metadata["traceID"])
+				b, _ := strconv.Atoi(res.Metadata["traceFlags"])
+				traceFlags := trace.TraceFlags(byte(b))
+				recSpanCtx = recSpanCtx.WithSpanID(spanID).WithTraceID(traceID).WithTraceFlags(traceFlags)
+			}
+
+			ctx1 := trace.ContextWithRemoteSpanContext(stream.Context(), recSpanCtx)
+
+			_, span := opentelemetry.Tracer.Start(ctx1, "client_block_processing")
+			span.SetAttributes(attribute.String("client_ip", GetLocalIP()))
+			span.SetAttributes(attribute.String("block_height", fmt.Sprint(res.BlockHeight)))
 
 			hb := &Block{
 				BlockHeight:    int(res.BlockHeight),
 				BlockTimestamp: int(res.BlockTime),
 				ReceivedAt:     int(time.Now().UnixMilli()),
 			}
+			bz, _ := json.Marshal(res)
+			span.AddEvent("client_msg_marshalled", trace.WithAttributes(
+				attribute.String("msg_size", fmt.Sprint(len(bz))),
+			))
+
+			span.End()
+
 			lastRecBlock = hb
 			blockCh <- hb
 		case t := <-ticker.C:
@@ -275,4 +291,20 @@ func collectStreamerStats(elapsedTimeSinceLastReceivedBlock time.Duration, influ
 		p = p.SetTime(time.Now())
 		influxWriteAPI.WritePoint(p)
 	}
+}
+
+func GetLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, address := range addrs {
+		// check the address type and if it is not a loopback the display it
+		if ipnet, ok := address.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+			if ipnet.IP.To4() != nil {
+				return ipnet.IP.String()
+			}
+		}
+	}
+	return ""
 }
