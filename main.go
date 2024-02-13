@@ -120,11 +120,41 @@ func main() {
 
 func chainStreamBlockReceives(ctx context.Context, client core_types.StreamClient, blockCh chan<- *Block, influxWriteAPI api.WriteAPI) error {
 
-	btcUsdtPerpMarket := "0x4ca0f92fc28be0c9761326016b5a1a2177dd6375558365116b5bdda9abc229ce"
-
 	req := core_types.StreamRequest{
+		BankBalancesFilter: &core_types.BankBalancesFilter{
+			Accounts: []string{"*"},
+		},
+		SpotOrdersFilter: &core_types.OrdersFilter{
+			MarketIds:     []string{"*"},
+			SubaccountIds: []string{"*"},
+		},
+		DerivativeOrdersFilter: &core_types.OrdersFilter{
+			MarketIds:     []string{"*"},
+			SubaccountIds: []string{"*"},
+		},
+		SpotTradesFilter: &core_types.TradesFilter{
+			MarketIds:     []string{"*"},
+			SubaccountIds: []string{"*"},
+		},
+		SubaccountDepositsFilter: &core_types.SubaccountDepositsFilter{
+			SubaccountIds: []string{"*"},
+		},
 		DerivativeOrderbooksFilter: &core_types.OrderbookFilter{
-			MarketIds: []string{btcUsdtPerpMarket},
+			MarketIds: []string{"*"},
+		},
+		SpotOrderbooksFilter: &core_types.OrderbookFilter{
+			MarketIds: []string{"*"},
+		},
+		PositionsFilter: &core_types.PositionsFilter{
+			SubaccountIds: []string{"*"},
+			MarketIds:     []string{"*"},
+		},
+		DerivativeTradesFilter: &core_types.TradesFilter{
+			SubaccountIds: []string{"*"},
+			MarketIds:     []string{"*"},
+		},
+		OraclePriceFilter: &core_types.OraclePriceFilter{
+			Symbol: []string{"*"},
 		},
 	}
 	stream, err := client.Stream(ctx, &req)
