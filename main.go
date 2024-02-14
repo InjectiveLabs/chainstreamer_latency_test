@@ -194,7 +194,8 @@ func chainStreamBlockReceives(ctx context.Context, client core_types.StreamClien
 
 			_, span := opentelemetry.Tracer.Start(ctx1, "client_block_processing")
 			span.SetAttributes(attribute.String("client_ip", GetLocalIP()))
-			span.SetAttributes(attribute.String("block_height", fmt.Sprint(res.BlockHeight)))
+			span.SetAttributes(attribute.String("block_height", fmt.Sprint(res.BlockHeight)),
+				attribute.String("curret_time", fmt.Sprintf("%s", time.Now().Format(time.StampNano))))
 
 			hb := &Block{
 				BlockHeight:    int(res.BlockHeight),
